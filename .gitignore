@@ -1,0 +1,9 @@
+/target
+.mypy_cache
+tags*
+
+*.con
+*.bak
+*.so
+*.dll
+*.lib
