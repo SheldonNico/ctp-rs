@@ -213,52 +213,6 @@ class ClsF:
             f"{rtn} {clsname}::{self.name}({args_repl}) {{ return m_member->{self.name}({argvs_repl}); }}"
         )
 
-def forward_to_rust_reinvoke(content: str, trait: str):
-    PATTERN = re.compile(r"pub fn {}_(\w+)\(([^)]*)\)(.*);".format(trait))
-    PATTERN_ARG = re.compile(r"(\w+)\s*:\s*(.*)")
-    traitfuns = []
-    exports = []
-    for line in PATTERN.findall(content):
-        func, args, rtn = line
-        args = [a.strip() for a in "".join(args).split(",") if len(a.strip()) > 0]
-        fun_name = camel_to_snake(func)
-        if fun_name.strip() == "drop": continue
-        args_repl = ", ".join(["&mut self"] + args[1:])
-        traitfun = f"""fn {fun_name}({args_repl}){rtn} {{  }}"""
-        traitfuns.append(traitfun)
-
-        for a in args[1:]:
-            match = PATTERN_ARG.match(a)
-            assert match is not None
-
-            pass
-        args_repl = ", ".join(["trait_obj: *mut ::std::os::raw::c_void"] + args[1:])
-        argv_repl = ", ".join(a[:a.find(":")] for a in args[1:])
-
-        export = f"""#[no_mangle]
-pub extern \"C\" fn {trait}_{func}({args_repl}){rtn} {{
-    let trait_obj = trait_obj as *mut Box<dyn {trait}>;
-    let trait_obj: &mut dyn {trait} = unsafe {{ &mut **trait_obj }};
-    trait_obj.{fun_name}({argv_repl})
-}}"""
-        exports.append(export)
-
-    traitfuns_repl = "\n".join([f"    {f}" for f in traitfuns])
-    exports_repl = "\n".join(exports)
-    if len(traitfuns) > 0:
-        print(f"""
-pub trait {trait} {{
-{traitfuns_repl}
-}}
-
-{exports_repl}
-#[no_mangle]
-pub extern "C" fn {trait}_Drop(trait_obj: *mut ::std::os::raw::c_void) {{
-    let trait_obj = trait_obj as *mut Box<dyn {trait}>;
-    let _r: Box<Box<dyn {trait}>> = unsafe {{ Box::from_raw(trait_obj) }};
-}}
-""")
-
 def port_ctp_td():
     meta = {}
     walk_hpp(open("./shared/include/ThostFtdcTraderApi.h", encoding="gbk").read(), meta)
@@ -268,9 +222,6 @@ def port_ctp_td():
 
     c2 = meta["CThostFtdcTraderSpi"]
     c2.forward_to_rust(meta)
-
-    trait_file = "trait.rs.bak"
-    if os.path.exists(trait_file): forward_to_rust_reinvoke(open(trait_file).read(), "Rust_CThostFtdcTraderSpi_Trait")
 
 def port_ctp_md():
     meta = {}
@@ -282,8 +233,6 @@ def port_ctp_md():
     c2 = meta["CThostFtdcMdSpi"]
     c2.forward_to_rust(meta)
 
-    trait_file = "trait.rs.bak"
-    if os.path.exists(trait_file): forward_to_rust_reinvoke(open(trait_file).read(), "Rust_CThostFtdcMdSpi_Trait")
 
 if __name__ == "__main__":
     port_ctp_md()
