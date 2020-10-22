@@ -86,7 +86,7 @@ fn replace_trait(fname: &Path, traits: &[&str]) -> Result<String, Box<dyn std::e
     let mut buf = std::fs::read_to_string(fname)?;
     for trait_extern in traits {
         let pattern = Regex::new(
-            &format!(r#"extern \s*"C"\s*\{{\s*pub\s+fn\s+{}_(\w+)\s*\(([^)]*)\)(.*);\s*}}\s*"#, trait_extern)).unwrap();
+            &format!(r#"extern \s*"C"\s*\{{\s*pub\s+fn\s+{}_(\w+)\s*\(([^)]*)\)([^;]*);\s*}}\s*"#, trait_extern)).unwrap();
         let pattern_arg = Regex::new(r"\s*(\w+)\s*:\s*(.*)\s*").unwrap();
 
         let mut exports = vec![];
@@ -102,7 +102,7 @@ fn replace_trait(fname: &Path, traits: &[&str]) -> Result<String, Box<dyn std::e
             let rtn = cap.get(3).unwrap().as_str();
             let fname_camel = camel_to_snake(fname);
             if fname_camel == "drop" { continue }
-            assert!(args[0].1.ends_with("c_void"));
+            assert!(args[0].1.trim().ends_with("c_void"));
 
             let mut tmp = args[1..].iter().map(|s| format!("{}: {}", s.0, s.1)).collect::<Vec<_>>();
             tmp.insert(0, "trait_obj: *mut ::std::os::raw::c_void".into());
