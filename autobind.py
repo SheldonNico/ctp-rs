@@ -1,239 +1,159 @@
-from typing import List, Dict, Tuple, Optional
-import itertools, re, os
+#! python3 autobind.py > src/wrapper_ext
+import typing as t
+import datetime, sys
+from clang.cindex import Index, Config, CursorKind, Cursor
 
-def camel_to_snake(name: str):
-    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+# ref to https://stackoverflow.com/questions/37336867/how-to-get-class-method-definitions-using-clang-python-bindings
+TABS = " " * 4
 
-def walk_hpp(content: str, meta: Dict[str, 'ClsAst']):
-    classstart = re.compile(r"class.*\s+(\w+)\s*\{")
-    funccomment = re.compile(r"^\s*//(.*)\s*$")
-    memberfunc = re.compile(r"^\s*(.*)\s+([\w*]+)\((.*)\)(.*);\s*$")
-    match = classstart.search(content)
-    while match != None:
-        assert match is not None
-        clsname, = match.groups()
-        clsast = ClsAst(clsname)
-        contents = content[match.end():].split("\n")
-        curr = 0
-        comments = []
-        for line in contents:
-            curr += 1
-            if funccomment.match(line):
-                match = funccomment.match(line)
-                assert match is not None
-                comments.append(match.groups()[0].lstrip("/"))
-            elif memberfunc.match(line):
-                match = memberfunc.match(line)
-                assert match is not None
-                rtn, funcname, args, decl = match.groups()
+def eprint(*args: t.Any, **kwargs: t.Any) -> None:  
+    print(*args, file=sys.stderr, **kwargs)
 
-                left = sum(c == '{' for c in decl)
-                right = sum(c == '}' for c in decl)
-                assert left == right
+def mainfun() -> None:
+    index = Index.create()
+    tu = index.parse("src/wrapper.hpp", args=["-Ishared/include", "-x", "c++", "--std=c++11"])
+    for node in tu.cursor.get_children():
+        if node.displayname in [
+            "CThostFtdcTraderSpi",
+            "CThostFtdcMdSpi"
+        ]:
+            eprint("found virtual node", node.kind, node.displayname, node.location.file.name, node.extent.start.offset, node.extent.end.offset)
+            extract_virtual_class(node)
+        if node.displayname in [
+            "CThostFtdcTraderApi",
+            "CThostFtdcMdApi",
+        ]:
+            eprint("found abc node", node.kind, node.displayname, node.location.file.name, node.extent.start.offset, node.extent.end.offset)
+            extract_abc_class(node)
 
-                curr = 0
-                for c in funcname:
-                    if c != '*': break
-                    curr += 1
-                    rtn += '*'
-                funcname = funcname[curr:]
+def extract_abc_class(node: Cursor) -> None:
+    class_name = node.spelling
+    rust_name = f"Rust_{class_name}"
 
-                if rtn.strip().startswith("static"):
-                    pass
-                else:
-                    clsast.funcs.append(ClsF(rtn, funcname, args, decl, comments))
-                comments = []
+    methods, methods_impl = [], []
+    methods_impl.append(f"{rust_name}::{rust_name}({class_name} *inner) : m_inner(inner) {{}}")
+    methods_impl.append(f"{rust_name}::~{rust_name}() {{ }}")
+    for cc in node.get_children():
+        if cc.kind == CursorKind.CXX_METHOD:
+            if cc.is_virtual_method():
+                assert not cc.type.is_function_variadic(), "not expect this to happen."
+
+                argnames, argdecl = [], []
+                for arg in cc.get_arguments():
+                    argdecl.append(restore_orig_argument(arg))
+                    argname = arg.spelling
+                    argtype = arg.type.spelling
+
+                    # Patch (std::string) ...
+                    # std::string is not part of C abi
+                    # use it as opaque type is Ok, but not convenient
+                    if argtype in ["const std::string &"]:
+                        argnames.append(f"{argname}.c_str()")
+                    else:
+                        argnames.append(argname)
+
+                argdecl = ", ".join(argdecl)
+                argnames = ", ".join(argnames)
+                rtn_type = cc.type.get_result().spelling
+
+                method_name = cc.spelling
+                forward_body = f"return m_inner->{method_name}({argnames});"
+                methods.append(f"{TABS*2}{rtn_type} {method_name}({argdecl});")
+                methods_impl.append(f"{rtn_type} {rust_name}::{method_name}({argdecl}) {{ {forward_body} }}")
             else:
-                left = sum(c == '{' for c in line)
-                right = sum(c == '}' for c in line)
-                if left == 0 and right == 1: break
+                pass
+        else:
+            pass
 
-        meta[clsname] = clsast
-        content = "\n".join(contents[curr:])
-        match = classstart.search(content)
+    methods = "\n".join(methods)
+    methods_impl = "\n".join(methods_impl)
+    destructor_override = " "
 
-
-class ClsAst:
-    name: str
-    parent: List['ClsAst']
-    funcs: List['ClsF']
-
-    def __init__(self, name: str):
-        self.name = name
-        self.parent = []
-        self.funcs = []
-
-    # 只会产生cpp代码，cpp代码会被 bindgen 转录成对应的api
-    def member_to_rust(self, meta: Dict[str, 'ClsAst'], is_m_member_owned: bool = True):
-        rust_name = f"Rust_{self.name}"
-
-        funcs = []
-        impls = []
-        for func in self.funcs:
-            cdef, cimpl = func.member_to_rust(rust_name)
-            impls.append(cimpl)
-            funcs.append(cdef)
-
-        funcs_repl = "\n".join([f"        {f}" for f in funcs])
-        des = "delete m_member;" if is_m_member_owned else ""
-        create_and_dest = [
-            f"{rust_name}::{rust_name}({self.name} *member) : m_member(member) {{  }};",
-            f"{rust_name}::~{rust_name}() {{ {des} }};"
-        ]
-        impls_repl = "\n".join(create_and_dest + impls)
-        cdef = f"""
+    print(f"""
 class {rust_name} {{
     public:
-        {self.name} *m_member;
-        {rust_name}({self.name} *member);
-        ~{rust_name}();
-
-{funcs_repl}
+        {class_name}* m_inner; 
+        {rust_name}({class_name} *inner);
+        ~{rust_name}(){destructor_override};
+{methods}
 }};
+{methods_impl}""")
 
+def extract_virtual_class(node: Cursor) -> None:
+    class_name = node.spelling
+    rust_name = f"Rust_{class_name}"
+    forward_name = f"Rust_{class_name}_Trait"
+    methods, methods_impl, extern_method_decl = [], [], []
+    extern_method_decl.append(f"extern \"C\" void {forward_name}_Drop(void* m_rust);")
+    methods_impl.append(f"{rust_name}::{rust_name}(void *rust) : m_rust(rust) {{}}")
+    methods_impl.append(f"{rust_name}::~{rust_name}() {{ {forward_name}_Drop(m_rust); }}")
+    destructor_virtual = False
+    for cc in node.get_children():
+        if cc.kind == CursorKind.CXX_METHOD:
+            if cc.is_virtual_method():
+                assert not cc.type.is_function_variadic(), "not expect this to happen."
 
-{impls_repl}
-"""
-        print(cdef)
+                argnames, argdecl, argdecl_extern = ["m_rust"], [], ["void* m_rust"]
+                for arg in cc.get_arguments():
+                    argdecl.append(restore_orig_argument(arg))
+                    argname = arg.spelling
+                    argtype = arg.type.spelling
 
-    # 产生cpp代码，同时生成对应的rust代码
-    def forward_to_rust(self, meta: Dict[str, 'ClsAst']):
-        rust_name = f"Rust_{self.name}"
+                    # Patch (std::string) ...
+                    # std::string is not part of C abi
+                    # use it as opaque type is Ok, but not convenient
+                    if argtype in ["const std::string &"]:
+                        argnames.append(f"{argname}.c_str()")
+                        argdecl_extern.append(f"const char* {argname}")
+                    else:
+                        argnames.append(argname)
+                        argdecl_extern.append(restore_orig_argument(arg))
 
-        funcs = []
-        impls = []
-        externcs = []
-        for func in self.funcs:
-            res = func.forward_to_rust(rust_name)
-            if res is None: continue
-            cdef, cimpl, externc = res
-            impls.append(cimpl)
-            funcs.append(cdef)
-            externcs.append(externc)
+                argdecl = ", ".join(argdecl)
+                argdecl_extern = ", ".join(argdecl_extern)
+                argnames = ", ".join(argnames)
+                rtn_type = cc.type.get_result().spelling
 
-        funcs_repl = "\n".join([f"        {f}" for f in funcs])
-        impls_repl = "\n".join(impls)
-        externcs_repl = "\n".join(externcs)
-        cdef = f"""
-class {rust_name} : {self.name} {{
+                method_name = cc.spelling
+                forward_method_name = f"{forward_name}_{method_name}"
+                forward_body = f"return {forward_method_name}({argnames});"
+                methods.append(f"{TABS*2}{rtn_type} {method_name}({argdecl}) override;")
+                methods_impl.append(f"{rtn_type} {rust_name}::{method_name}({argdecl}) {{ {forward_body} }}")
+                extern_method_decl.append(f"extern \"C\" {rtn_type} {forward_method_name}({argdecl_extern});")
+        elif cc.kind == CursorKind.DESTRUCTOR:
+            destructor_virtual = cc.is_virtual_method()
+        elif cc.kind == CursorKind.CONSTRUCTOR:
+            pass
+
+    methods = "\n".join(methods)
+    extern_method_decl = "\n".join(extern_method_decl)
+    methods_impl = "\n".join(methods_impl)
+    destructor_override = " override" if destructor_virtual else ""
+
+    print(f"""
+class Rust_{class_name} : {class_name} {{
     public:
-        void *m_rust;
-        {rust_name}(void *rust);
-        ~{rust_name}();
-
-{funcs_repl}
+        void* m_rust; 
+        Rust_{class_name}(void *rust);
+        ~Rust_{class_name}(){destructor_override};
+{methods}
 }};
+{extern_method_decl}
+{methods_impl}""")
 
-{externcs_repl}
-extern "C" void {rust_name}_Trait_Drop(void* m_rust);
+def restore_orig_argument(node: Cursor) -> str:
+    orig = ""
+    start = None
+    breaked = False
+    for xx in node.get_tokens():
+        if xx.spelling == "=": break # 跳过 arg1 = 12
+        if start is not None: orig += " " * (xx.location.offset - start)
+        orig += xx.spelling
+        start = xx.location.offset + len(xx.spelling)
 
-{impls_repl}
-{rust_name}::{rust_name}(void *rust) : m_rust(rust) {{}}
-{rust_name}::~{rust_name}() {{ {rust_name}_Trait_Drop(m_rust); }}
-"""
-
-        print(cdef)
-
-class ClsF:
-    def __init__(self, rtn, name, args, decl, comments):
-        self.rtn = rtn
-        self.name = name
-        self.args = args
-        self.decl = decl
-        self.comments = comments
-
-    def forward_to_rust(self, clsname: str) -> Optional[Tuple[str, str, str]]:
-        rtn = self.rtn.strip()
-        if rtn.startswith("virtual"):
-            rtn = rtn.lstrip("virtual").strip()
-        else:
-            return None
-        ARG_PATTERN = re.compile(r"^(.*)\s+([\w*]+)\s*([\[\]]*)$")
-
-        args = []
-        argvs = []
-
-        for arg in self.args.split(","):
-            arg = arg.strip()
-            if len(arg) == 0: continue
-            if arg.find("=") >= 0: arg = arg[:arg.find("=")]
-            match = ARG_PATTERN.match(arg)
-            assert match is not None
-            a, v, b = match.groups()
-            trim_star = 0
-            for c in v:
-                if c != '*': break
-                trim_star += 1
-                a += '*'
-            v = v[trim_star:]
-            args.append(f"{a} {v}{b}")
-            argvs.append(v)
-
-        args_repl = ", ".join(args)
-        argvs_repl = ", ".join(["m_rust"] + argvs)
-        args_repl_extern = ", ".join(["void* m_rust"] + args)
-
-        trait_name = f"{clsname}_Trait"
-        forward_func = f"{trait_name}_{self.name}"
-
-        return (
-            f"{rtn} {self.name}({args_repl}) override;",
-            f"{rtn} {clsname}::{self.name}({args_repl}) {{ return {forward_func}({argvs_repl}); }}",
-            f"extern \"C\" {rtn} {forward_func}({args_repl_extern});"
-        )
-
-    def member_to_rust(self, clsname: str) -> Tuple[str, str]:
-        func_name_right = camel_to_snake(self.name)
-        rtn = self.rtn.strip()
-        if rtn.startswith("virtual"): rtn = rtn.lstrip("virtual").strip()
-        ARG_PATTERN = re.compile(r"^(.*)\s+([\w*]+)\s*([\]\[]*)$")
-
-        args = []
-        argvs = []
-        for arg in self.args.split(","):
-            arg = arg.strip()
-            if len(arg) == 0: continue
-            if arg.find("=") >= 0: arg = arg[:arg.find("=")]
-            match = ARG_PATTERN.match(arg)
-            assert match is not None
-            a, v, b = match.groups()
-            trim_star = 0
-            for c in v:
-                if c != '*': break
-                trim_star += 1
-                a += '*'
-            v = v[trim_star:]
-            args.append(f"{a} {v}{b}")
-            argvs.append(v)
-        args_repl = ", ".join(args)
-        argvs_repl = ", ".join(argvs)
-        return (
-            f"{rtn} {self.name}({args_repl});",
-            f"{rtn} {clsname}::{self.name}({args_repl}) {{ return m_member->{self.name}({argvs_repl}); }}"
-        )
-
-def port_ctp_td():
-    meta = {}
-    walk_hpp(open("./shared/include/ThostFtdcTraderApi.h", encoding="gbk").read(), meta)
-
-    c1 = meta["CThostFtdcTraderApi"]
-    c1.member_to_rust(meta, is_m_member_owned=False)
-
-    c2 = meta["CThostFtdcTraderSpi"]
-    c2.forward_to_rust(meta)
-
-def port_ctp_md():
-    meta = {}
-    walk_hpp(open("./shared/include/ThostFtdcMdApi.h", encoding="gbk").read(), meta)
-
-    c1 = meta["CThostFtdcMdApi"]
-    c1.member_to_rust(meta, is_m_member_owned=False)
-
-    c2 = meta["CThostFtdcMdSpi"]
-    c2.forward_to_rust(meta)
-
+    if breaked: raise
+    return orig
 
 if __name__ == "__main__":
-    port_ctp_md()
-    # port_ctp_td()
+    print("// generated by python autobind.py @{:%Y-%m-%d}".format(datetime.datetime.now()))
+    mainfun()

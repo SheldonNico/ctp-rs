@@ -4,6 +4,8 @@ use regex::Regex;
 use lazy_static::lazy_static;
 
 fn main() {
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Set up environment
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let platform = if cfg!(target_family = "windows") { "windows" } else { "unix" };
     let arch = if cfg!(target_arch = "x86_64") {
@@ -13,14 +15,8 @@ fn main() {
     } else {
         panic!("can not build on this platform.")
     };
-
-    cc::Build::new()
-        .cpp(true)
-        .file("src/wrapper.cpp")
-        .flag_if_supported("-std=c++17")
-        .flag_if_supported("-w")
-        .compile("wrapper");
-
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Link
     println!("cargo:rustc-link-search={}", root.join("shared/md").join(format!("{}.{}", platform, arch)).display());
     println!("cargo:rustc-link-search={}", root.join("shared/td").join(format!("{}.{}", platform, arch)).display());
     println!("cargo:rustc-link-search={}", root.join("shared/data_collect").join(format!("{}.{}", platform, arch)).display());
@@ -33,11 +29,22 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=thostmduserapi_se");
     println!("cargo:rustc-link-lib=dylib=thosttraderapi_se");
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Build
+    cc::Build::new()
+        .cpp(true)
+        .file("src/wrapper.cpp")
+        .flag_if_supported("-std=c++17")
+        .flag_if_supported("-w")
+        .compile("wrapper");
+
     // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rerun-if-changed=src/wrapper.hpp");
+    println!("cargo:rerun-if-changed=src/wrapper_ext");
     println!("cargo:rerun-if-changed=src/wrapper.cpp");
 
-
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Bindgen
     // ctp api header is clean enough, we will use blacklist instead whitelist
     let bindings = bindgen::Builder::default()
         // The input header we would like to generate
