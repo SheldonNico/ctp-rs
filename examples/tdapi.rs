@@ -1,25 +1,19 @@
-use ctp_rs::sys::*;
+use ctp_rs::*;
 
-use std::time::{Duration, Instant};
-use std::io::{Write, Read};
 use std::os::raw::*;
 use std::ffi::{CStr, CString};
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::mpsc::{self, Sender, SyncSender, Receiver};
 
 use log::*;
-use crossbeam::{channel::{self, Sender, Receiver}, select};
-use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Resume {
     Restart = THOST_TE_RESUME_TYPE_THOST_TERT_RESTART as _,
     Resume = THOST_TE_RESUME_TYPE_THOST_TERT_RESUME as _,
     Quick = THOST_TE_RESUME_TYPE_THOST_TERT_QUICK as _,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     flowpath: String,
     front_addr: String,
@@ -35,7 +29,6 @@ pub struct Config {
     user_id: String,
     password: String,
 
-    #[serde(default)]
     qry_freq: i32,
 }
 
@@ -48,7 +41,7 @@ pub struct TDApi {
 }
 
 struct Spi {
-    tx: Sender<String>
+    tx: SyncSender<String>
 }
 
 impl Rust_CThostFtdcTraderSpi_Trait for Spi {
@@ -126,7 +119,7 @@ impl TDApi {
     }
 
     pub fn req_init(&mut self) -> Result<(), String> {
-        let (tx, rx) = channel::bounded(1024);
+        let (tx, rx) = mpsc::sync_channel(1024);
         self.register(Spi { tx });
         self.rx = Some(rx);
         debug!("start api...");

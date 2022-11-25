@@ -1,7 +1,6 @@
 use std::env;
 use std::path::{PathBuf, Path};
 use regex::Regex;
-use std::io::Read;
 use lazy_static::lazy_static;
 
 fn main() {
@@ -74,7 +73,7 @@ fn main() {
         .expect("Fail to write converted bindings!");
 }
 
-fn camel_to_snake<'t>(name: &'t str) -> String {
+fn camel_to_snake(name: &str) -> String {
     lazy_static! {
         static ref PATTERN1: Regex = Regex::new(r"(.)([A-Z][a-z]+)").unwrap();
         static ref PATTERN2: Regex = Regex::new(r"([a-z0-9])([A-Z])").unwrap();
@@ -91,11 +90,11 @@ fn replace_trait(fname: &Path, traits: &[&str]) -> Result<String, Box<dyn std::e
 
         let mut exports = vec![];
         let mut traitfuns = vec![];
-        assert!(pattern.captures(&buf).is_some(), format!("`{}` not found in source code", trait_extern));
+        assert!(pattern.captures(&buf).is_some(), "`{}` not found in source code", trait_extern);
         for cap in pattern.captures_iter(&buf) {
             let fname = cap.get(1).unwrap().as_str().trim();
-            let args: Vec<_> = cap.get(2).unwrap().as_str().split(",").filter(
-                |s| s.trim().len() > 0
+            let args: Vec<_> = cap.get(2).unwrap().as_str().split(',').filter(
+                |s| !s.trim().is_empty()
             ).map(
                 |s| { let c = pattern_arg.captures(s).unwrap(); (c.get(1).unwrap().as_str(), c.get(2).unwrap().as_str()) }
             ).collect();
@@ -140,7 +139,7 @@ pub extern "C" fn {trait_extern}_Drop(trait_obj: *mut ::std::os::raw::c_void) {{
     let trait_obj = trait_obj as *mut Box<dyn {trait_extern}>;
     let _r: Box<Box<dyn {trait_extern}>> = unsafe {{ Box::from_raw(trait_obj) }};
 }}
-"#, ori = pattern.replace_all(&buf, "").to_string(), exports_repl=exports_repl, trait_extern=trait_extern,
+"#, ori = pattern.replace_all(&buf, ""), exports_repl=exports_repl, trait_extern=trait_extern,
 traitfuns_repl=traitfuns_repl
             );
     }

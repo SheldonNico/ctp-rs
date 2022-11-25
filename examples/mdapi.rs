@@ -1,4 +1,4 @@
-use ctp_rs::sys::*;
+use ctp_rs::*;
 
 use std::time::{Duration, Instant};
 use std::io::{Write, Read};
@@ -9,10 +9,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Condvar};
 
 use log::*;
-use crossbeam::{channel::{self, Sender, Receiver}, select};
-use serde::{Serialize, Deserialize};
+use std::sync::mpsc::{self, SyncSender, Receiver};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     flowpath: String,
     is_udp: bool,
@@ -20,7 +19,6 @@ pub struct Config {
     front_addr: String,
     nm_addr: String,
 
-    #[serde(default)]
     symbols_file: String,
 }
 
@@ -42,7 +40,7 @@ pub enum Event {
 }
 
 struct Spi {
-    tx: Sender<Event>
+    tx: SyncSender<Event>
 }
 
 impl Rust_CThostFtdcMdSpi_Trait for Spi {
@@ -94,7 +92,7 @@ impl MDApi {
     }
 
     fn req_init(&mut self) -> Result<(), String> {
-        let (tx, rx) = channel::bounded(1024);
+        let (tx, rx) = mpsc::sync_channel(1024);
         self.register(Spi { tx });
         self.rx = Some(rx);
         debug!("start api...");
@@ -142,43 +140,26 @@ impl MDApi {
         assert!(self.rx.is_some(), "channel not started.");
 
         let rx = self.rx.as_mut().unwrap();
-
-        loop {
-            select! {
-                recv(rx) -> event => {
-                    match event {
-                        Ok(Event::Connected) => {
-                            break;
-                        }
-                        _ => {
-                            return Err(format!("invalid event: {:?}", event))
-                        }
-                    }
-                },
-                default((Duration::from_secs(5))) => {
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Err(_) => { 
                     return Err("Timeout try recv `req_init`".into())
-                }
+            }
+            Ok(Event::Connected) => { }
+            Ok(event) => {
+                return Err(format!("invalid event: {:?}", event))
             }
         }
 
         self.req_user_login()?;
 
         let rx = self.rx.as_mut().unwrap();
-        loop {
-            select! {
-                recv(rx) -> event => {
-                    match event {
-                        Ok(Event::UserLogin) => {
-                            break;
-                        }
-                        _ => {
-                            return Err(format!("invalid event: {:?}", event))
-                        }
-                    }
-                },
-                default((Duration::from_secs(5))) => {
-                    return Err("Timeout try recv `req_user_login`".into())
-                }
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Err(_) => { 
+                return Err("Timeout try recv `req_user_login`".into())
+            }
+            Ok(Event::UserLogin) => { }
+            Ok(event) => {
+                return Err(format!("invalid event: {:?}", event))
             }
         }
 

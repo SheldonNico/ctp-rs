@@ -15,8 +15,6 @@ lazy_static = "1.4.0"
 regex = "1.4.1"
 
 [dev-dependencies]
-crossbeam = "0.8.0"
-serde = { version = "1.0.116", features = ["derive"] }
 log = "0.4.11"
 dotenv = "0.15.0"
 env_logger = "0.7.1"
