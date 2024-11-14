@@ -65,7 +65,7 @@ shared
 ```
 
 ## How to build on windows
-1. file tree for windows:
+1. File tree for windows:
 
 ```
 PS D:\Desktop\ctp-rs> tree .\shared\
@@ -78,23 +78,23 @@ D:\DESKTOP\CTP-RS\SHARED
 │   └───6.7.0_CP
 ├───windows.x86
 └───windows.x86_64
-PS D:\Desktop\ctp-rs> dir .\shared\windows.x86\
+PS D:\Desktop\ctp-rs> dir .\shared\windows.x86_64\
 
 
-    目录: D:\Desktop\ctp-rs\shared\windows.x86
+    目录: D:\Desktop\ctp-rs\shared\windows.x86_64
 
 
 Mode                 LastWriteTime         Length Name
 ----                 -------------         ------ ----
--a----         2022/12/6     17:28        2193920 thostmduserapi_se.dll
--a----         2022/12/6     17:28           3764 thostmduserapi_se.lib
--a----         2020/11/5     16:59        2497024 thosttraderapi_se.dll
--a----         2020/11/5     16:59           3902 thosttraderapi_se.lib
--a----         2020/11/5     16:59        1393152 WinDataCollect.dll
--a----         2020/11/5     16:59           1974 WinDataCollect.lib
+-a----         2022/12/6     17:28        2800128 thostmduserapi_se.dll
+-a----         2022/12/6     17:28           3822 thostmduserapi_se.lib
+-a----         2020/11/5     16:59        3181568 thosttraderapi_se.dll
+-a----         2020/11/5     16:59           3960 thosttraderapi_se.lib
+-a----         2020/11/5     16:59        1865216 WinDataCollect.dll
+-a----         2020/11/5     16:59           1992 WinDataCollect.lib
 ```
 
-2. make sure you have llvm + visual studio installed. Gcc may work, but I didn't try.
+2. Make sure you have llvm + visual studio installed. Gcc may work, but I didn't try.
 
 ```
 PS D:\Desktop\ctp-rs> scoop install llvm
@@ -106,4 +106,4 @@ Use 'scoop update llvm' to install a new version.
 # If you install llvm mannually, you should setup environment path by hand.
 ```
 
-3. Just `cargo b` should work. [issue 1725](https://github.com/rust-lang/rust-bindgen/issues/1725) has been fiexed by updating bindgen-rs.
+3. `cargo b --example tdapi` should work. [issue 1725](https://github.com/rust-lang/rust-bindgen/issues/1725) has been fiexed by updating bindgen-rs.
