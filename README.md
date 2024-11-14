@@ -63,3 +63,47 @@ shared
         ├── thosttraderapi_se.dll
         └── thosttraderapi_se.lib
 ```
+
+## How to build on windows
+1. file tree for windows:
+
+```
+PS D:\Desktop\ctp-rs> tree .\shared\
+Folder PATH listing for volume Resources
+Volume serial number is B26B-15B2
+D:\DESKTOP\CTP-RS\SHARED
+├───include
+├───unix.x86_64
+│   ├───6.6.9_CP
+│   └───6.7.0_CP
+├───windows.x86
+└───windows.x86_64
+PS D:\Desktop\ctp-rs> dir .\shared\windows.x86\
+
+
+    目录: D:\Desktop\ctp-rs\shared\windows.x86
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         2022/12/6     17:28        2193920 thostmduserapi_se.dll
+-a----         2022/12/6     17:28           3764 thostmduserapi_se.lib
+-a----         2020/11/5     16:59        2497024 thosttraderapi_se.dll
+-a----         2020/11/5     16:59           3902 thosttraderapi_se.lib
+-a----         2020/11/5     16:59        1393152 WinDataCollect.dll
+-a----         2020/11/5     16:59           1974 WinDataCollect.lib
+```
+
+2. make sure you have llvm + visual studio installed. Gcc may work, but I didn't try.
+
+```
+PS D:\Desktop\ctp-rs> scoop install llvm
+WARN  'llvm' (19.1.3) is already installed.
+Use 'scoop update llvm' to install a new version.
+
+# scoop will setup environment path right to include libclang.dll. which is important.
+#
+# If you install llvm mannually, you should setup environment path by hand.
+```
+
+3. Just `cargo b` should work. [issue 1725](https://github.com/rust-lang/rust-bindgen/issues/1725) has been fiexed by updating bindgen-rs.

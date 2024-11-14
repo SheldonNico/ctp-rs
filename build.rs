@@ -17,9 +17,8 @@ fn main() {
     };
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Link
-    println!("cargo:rustc-link-search={}", root.join("shared/md").join(format!("{}.{}", platform, arch)).display());
-    println!("cargo:rustc-link-search={}", root.join("shared/td").join(format!("{}.{}", platform, arch)).display());
-    println!("cargo:rustc-link-search={}", root.join("shared/data_collect").join(format!("{}.{}", platform, arch)).display());
+    // println!("cargo:rustc-link-search={}", root.join("shared/md").join(format!("{}.{}", platform, arch)).display());
+    println!("cargo:rustc-link-search={}", root.join("shared").join(format!("{}.{}", platform, arch)).display());
 
     if platform == "unix" {
         println!("cargo:rustc-link-lib=dylib=LinuxDataCollect");
