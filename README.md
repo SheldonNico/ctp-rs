@@ -23,45 +23,41 @@ There are lots of `extern "C" Rust_XXX_Trait_On_XX` function inside wrapper_ext,
 XXX.so files are not included, please put it like this to satify compiler:
 
 ```
-$ tree shared
-
+$ exa -T shared
 shared
-├── data_collect
-│   ├── unix.x86_64
-│   │   ├── libLinuxDataCollect.so -> LinuxDataCollect.so
-│   │   └── LinuxDataCollect.so
-│   ├── windows.x86
-│   │   ├── WinDataCollect.dll
-│   │   └── WinDataCollect.lib
-│   └── windows.x86_x64
-│       ├── WinDataCollect.dll
-│       └── WinDataCollect.lib
 ├── include
-│   ├── DataCollect.h
-│   ├── ThostFtdcMdApi.h
-│   ├── ThostFtdcTraderApi.h
-│   ├── ThostFtdcUserApiDataType.h
-│   └── ThostFtdcUserApiStruct.h
-├── md
-│   ├── unix.x86_64
-│   │   ├── libthostmduserapi_se.so -> thostmduserapi_se.so
-│   │   └── thostmduserapi_se.so
-│   ├── windows.x86
-│   │   ├── thostmduserapi_se.dll
-│   │   └── thostmduserapi_se.lib
-│   └── windows.x86_x64
-│       ├── thostmduserapi_se.dll
-│       └── thostmduserapi_se.lib
-└── td
-    ├── unix.x86_64
-    │   ├── libthosttraderapi_se.so -> thosttraderapi_se.so
-    │   └── thosttraderapi_se.so
-    ├── windows.x86
-    │   ├── thosttraderapi_se.dll
-    │   └── thosttraderapi_se.lib
-    └── windows.x86_x64
-        ├── thosttraderapi_se.dll
-        └── thosttraderapi_se.lib
+│  ├── DataCollect.h
+│  ├── ThostFtdcMdApi.h
+│  ├── ThostFtdcTraderApi.h
+│  ├── ThostFtdcUserApiDataType.h
+│  └── ThostFtdcUserApiStruct.h
+├── unix.x86_64
+│  ├── 6.6.9_CP
+│  │  ├── thostmduserapi_se.so
+│  │  └── thosttraderapi_se.so
+│  ├── 6.7.0_CP
+│  │  ├── thostmduserapi_se.so
+│  │  └── thosttraderapi_se.so
+│  ├── libLinuxDataCollect.so -> LinuxDataCollect.so
+│  ├── libthostmduserapi_se.so -> thostmduserapi_se.so
+│  ├── libthosttraderapi_se.so -> thosttraderapi_se.so
+│  ├── LinuxDataCollect.so
+│  ├── thostmduserapi_se.so
+│  └── thosttraderapi_se.so
+├── windows.x86
+│  ├── thostmduserapi_se.dll
+│  ├── thostmduserapi_se.lib
+│  ├── thosttraderapi_se.dll
+│  ├── thosttraderapi_se.lib
+│  ├── WinDataCollect.dll
+│  └── WinDataCollect.lib
+└── windows.x86_64
+   ├── thostmduserapi_se.dll
+   ├── thostmduserapi_se.lib
+   ├── thosttraderapi_se.dll
+   ├── thosttraderapi_se.lib
+   ├── WinDataCollect.dll
+   └── WinDataCollect.lib
 ```
 
 ## How to build on windows
