@@ -1,82 +1,414 @@
-use std::env;
-use std::path::{PathBuf, Path};
-use regex::Regex;
 use lazy_static::lazy_static;
+use regex::Regex;
+use std::collections::HashMap;
+use std::env;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
+const CTP_SDK_PATH: &'static str = "CTP_SDK_PATH";
+
+// ref: https://www.reddit.com/r/rust/comments/dym88t/rust_and_c_virtual_functions/
 fn main() {
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // Set up environment
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let platform = if cfg!(target_family = "windows") { "windows" } else { "unix" };
-    let arch = if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else if cfg!(target_arch = "x86") {
-        "x86"
-    } else {
-        panic!("can not build on this platform.")
-    };
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // Link
-    // println!("cargo:rustc-link-search={}", root.join("shared/md").join(format!("{}.{}", platform, arch)).display());
-    println!("cargo:rustc-link-search={}", root.join("shared").join(format!("{}.{}", platform, arch)).display());
+    println!("cargo:rerun-if-env-changed={}", CTP_SDK_PATH);
 
-    if platform == "unix" {
-        println!("cargo:rustc-link-lib=dylib=LinuxDataCollect");
-    } else {
-        println!("cargo:rustc-link-lib=dylib=WinDataCollect");
-    }
-    println!("cargo:rustc-link-lib=dylib=thostmduserapi_se");
-    println!("cargo:rustc-link-lib=dylib=thosttraderapi_se");
+    let sdk_path = std::env::var(CTP_SDK_PATH).expect("`CTP_SDK_PATH` not set");
+    let sdk_path = Path::new(&sdk_path);
+
+    let fpathes = read_for_items(sdk_path).expect("fail to read files");
+    let sdk_td_path = search_for_fname(&fpathes, "ThostFtdcTraderApi.h").unwrap();
+    let sdk_md_path = search_for_fname(&fpathes, "ThostFtdcMdApi.h").unwrap();
+    let rsfile = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
+    let cppfile = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.cpp");
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Create a new `Clang` instance
+    let clang_ins = clang::Clang::new().unwrap();
+
+    // Create a new `Index`
+    let index = clang::Index::new(&clang_ins, false, false);
+
+    let mut fh = std::fs::File::create(&cppfile).expect("fail to create cppfile");
+    inherit_spi(
+        sdk_td_path.as_ref(),
+        &index,
+        "CThostFtdcTraderSpi",
+        "Rust_Td_",
+        &mut fh,
+    )
+    .expect("fail to forward spi for trader");
+    inherit_spi(
+        sdk_md_path.as_ref(),
+        &index,
+        "CThostFtdcMdSpi",
+        "Rust_Md_",
+        &mut fh,
+    )
+    .expect("fail to forward spi for trader");
+    drop(fh);
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    search_and_println_dylib(&fpathes, "thostmduserapi")
+        .expect("fail to find lib for thosttraderapi");
+    search_and_println_dylib(&fpathes, "thosttraderapi")
+        .expect("fail to find lib for thosttraderapi");
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Build
     cc::Build::new()
         .cpp(true)
-        .file("src/wrapper.cpp")
+        .file(&cppfile)
         .flag_if_supported("-std=c++17")
         .flag_if_supported("-w")
-        .compile("wrapper");
-
-    // Tell cargo to invalidate the built crate whenever the wrapper changes
-    println!("cargo:rerun-if-changed=src/wrapper.hpp");
-    println!("cargo:rerun-if-changed=src/wrapper_ext");
-    println!("cargo:rerun-if-changed=src/wrapper.cpp");
+        .compile("bindings");
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Bindgen
     // ctp api header is clean enough, we will use blacklist instead whitelist
-    let bindings = bindgen::Builder::default()
+    bindgen::Builder::default()
         // The input header we would like to generate
         // bindings for.
-        .header("src/wrapper.hpp")
+        .header(cppfile.display().to_string())
+        .clang_args(["-x", "c++"])
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .derive_debug(true)
         // make output smaller
         .layout_tests(false)
         .generate_comments(false)
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
-        // we will handle class mannually by `autobind.py`
-        // function defined in rust
-        .opaque_type("CThostFtdcTraderApi")
-        .opaque_type("CThostFtdcTraderSpi")
-        .opaque_type("CThostFtdcMdApi")
-        .opaque_type("CThostFtdcMdSpi")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .rustified_enum("Rust_.*MsgType")
+        .allowlist_item("Rust_.*")
+        .allowlist_item("CThostFtdcTraderApi")
+        .allowlist_item("CThostFtdcMdApi")
+        // .allowlist_item("CThostFtdcTraderSpi")
+        .vtable_generation(true)
         // Finish the builder and generate the bindings.
         .generate()
         // Unwrap the Result and panic on failure.
-        .expect("Unable to generate bindings");
-
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let outfile = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
-    bindings
-        .write_to_file(&outfile)
+        .expect("Unable to generate bindings")
+        .write_to_file(&rsfile)
         .expect("Couldn't write bindings!");
+}
 
-    let buf = replace_trait(&outfile, &["Rust_CThostFtdcMdSpi_Trait", "Rust_CThostFtdcTraderSpi_Trait"]).
-        expect("Fail to replace trait!");
-    std::fs::write(&outfile, &buf)
-        .expect("Fail to write converted bindings!");
+////////////////////////////////////////////////////////////////////////////////
+pub fn read_for_items(dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
+    dir.as_ref()
+        .read_dir()?
+        .into_iter()
+        .map(|entity| {
+            entity.and_then(|entity| {
+                let pth = entity.path();
+                if pth.is_dir() {
+                    read_for_items(&pth).map(|mut out| {
+                        out.push(pth);
+                        out
+                    })
+                } else {
+                    Ok(vec![pth])
+                }
+            })
+        })
+        .collect::<io::Result<Vec<Vec<PathBuf>>>>()
+        .map(|ps| ps.concat())
+}
+
+pub fn search_for_fname(fpathes: &[PathBuf], target: &str) -> Option<PathBuf> {
+    let found: Vec<_> = fpathes
+        .iter()
+        .filter(|p| {
+            p.is_file()
+                && p.file_name()
+                    .map(|fname| fname == target)
+                    .unwrap_or_default()
+        })
+        .collect();
+    if found.len() == 1 {
+        Some(found[0].to_owned())
+    } else {
+        None
+    }
+}
+
+pub fn search_for_dirname(fpathes: &[PathBuf], target: &str) -> Option<PathBuf> {
+    let found: Vec<_> = fpathes
+        .iter()
+        .filter(|p| {
+            p.is_dir()
+                && p.file_name()
+                    .map(|fname| fname == target)
+                    .unwrap_or_default()
+        })
+        .collect();
+    if found.len() == 1 {
+        Some(found[0].to_owned())
+    } else {
+        None
+    }
+}
+
+// 最好自行修改，SDK 有多个版本，很难通过简单的规则匹配出来
+pub fn search_and_println_dylib(fpathes: &[PathBuf], target: &str) -> Option<()> {
+    let pth = if cfg!(target_os = "macos") {
+        search_for_dirname(fpathes, &format!("{target}.framework"))
+    } else if cfg!(target_os = "windows") {
+        search_for_fname(fpathes, &format!("{target}.lib"))
+            .or(search_for_fname(fpathes, &format!("{target}_se.lib")))
+    } else if cfg!(target_os = "linux") {
+        search_for_fname(fpathes, &format!("lib{target}.so"))
+            .or(search_for_fname(fpathes, &format!("lib{target}_se.so")))
+            .or(search_for_fname(fpathes, &format!("{target}.so")))
+            .or(search_for_fname(fpathes, &format!("{target}_se.so")))
+    } else {
+        return None;
+    };
+    let pth = pth?;
+
+    println!("cargo:rustc-link-search={}", pth.parent()?.display());
+    println!(
+        "cargo:rustc-link-lib=dylib:+verbatim={}",
+        pth.file_name()?.display()
+    );
+    Some(())
+}
+
+pub fn inherit_spi(
+    hfile: &Path,
+    index: &clang::Index,
+    spi: &str,
+    prefix: &str,
+    mut output: impl Write,
+) -> io::Result<()> {
+    let mut s_include: String = format!("#include \"{}\"", std::path::absolute(hfile)?.display());
+    let mut s_struct_decl: Vec<String> = vec![];
+    let mut s_union_decl: String = "".into();
+    let mut s_enum_decl: String = "".into();
+    let mut s_typedef_decl: Vec<String> = vec![];
+    let mut s_class_decl: String = "".into();
+    ////////////////////////////////////////////////////////////////////////////////
+    const SPACE: &'static str = "    ";
+    let s_union_name = format!("{prefix}MsgBody");
+    let s_class_name = format!("{prefix}{spi}");
+    let s_enum_name = format!("{prefix}MsgType");
+
+    let s_callback_name = format!("F_On_{s_enum_name}_T");
+    s_typedef_decl.push(format!("typedef void (*{s_callback_name})({s_enum_name} msg_type, {s_union_name} msg_body, void* params);"));
+
+    // Parse a source file into a translation unit
+    let tu = index
+        .parser(hfile)
+        .arguments(&["-x", "c++"])
+        .parse()
+        .map_err(io::Error::other)?;
+
+    let mut union_fields = vec![];
+    let mut enum_fields = vec![];
+    let mut class_methods_override: Vec<String> = vec![];
+    let mut arg_len_to_args: HashMap<usize, (Vec<String>, Vec<String>, String)> =
+        Default::default();
+    for ety in tu.get_entity().get_children().into_iter() {
+        if let Some(name) = ety.get_name() {
+            if name == spi {
+                assert_eq!(ety.get_kind(), clang::EntityKind::ClassDecl);
+                for mtd in ety.get_children() {
+                    if mtd.get_kind() != clang::EntityKind::Method {
+                        continue;
+                    }
+                    let Some(func_name) = mtd.get_name() else {
+                        continue;
+                    };
+                    let Some(arguments) = mtd.get_arguments() else {
+                        continue;
+                    };
+                    let mut args_name: Vec<_> =
+                        arguments.iter().flat_map(|arg| arg.get_name()).collect();
+                    let mut args_type_name: Vec<_> = arguments
+                        .iter()
+                        .flat_map(|arg| arg.get_type().map(|t| t.get_display_name()))
+                        .collect();
+                    let return_type_name = mtd.get_result_type().unwrap().get_display_name();
+                    let is_first_pointer = arguments.len() > 0
+                        && arguments[0]
+                            .get_type()
+                            .map(|a| a.get_pointee_type().is_some())
+                            .unwrap_or_default();
+
+                    enum_fields.push(func_name.clone());
+                    if !is_first_pointer {
+                        let s_struct_name = format!("{prefix}{func_name}");
+                        let s_struct_fields_decl = to_argument_list(&args_type_name, &args_name)
+                            .iter()
+                            .map(|s| format!("{SPACE}{s};"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        s_struct_decl.push(format!(
+                            "struct {s_struct_name} {{\n{s_struct_fields_decl}\n}};"
+                        ));
+
+                        let s_union_field_name = camel_to_snake(&func_name);
+                        union_fields.push((s_struct_name.clone(), s_union_field_name.clone()));
+
+                        let s_method_arguments_decl =
+                            to_argument_list(&args_type_name, &args_name).join(", ");
+                        let s_method_arguments = indent(&args_name.join(",\n"), 5);
+                        class_methods_override.push(format!(
+                            "{return_type_name} {func_name}({s_method_arguments_decl}) override {{ 
+    return m_callback(
+            {s_enum_name}::{func_name},
+            {s_union_name} {{
+                .{s_union_field_name} = {s_struct_name} {{
+{s_method_arguments}
+                }}
+            }},
+            m_callback_params
+    );
+}}"
+                        ));
+                    } else {
+                        let arg_len = args_type_name.len();
+                        let s_struct_name = format!("{prefix}Arg{arg_len}");
+                        let s_struct_fields_decl =
+                            vec![(&"void*".to_string(), &"body".to_string())]
+                                .into_iter()
+                                .chain(args_type_name.iter().zip(args_name.iter()).skip(1))
+                                .map(|(t, n)| format!("{SPACE} {t} {n};"))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                        let s_union_field_name = format!("arg{arg_len}");
+
+                        if let Some((args_type_name_prev, _, return_type_name_prev)) =
+                            arg_len_to_args.get(&arg_len)
+                        {
+                            assert_eq!(
+                                args_type_name_prev,
+                                &args_type_name.iter().skip(1).cloned().collect::<Vec<_>>(),
+                            );
+                            assert_eq!(return_type_name_prev, &return_type_name);
+                        } else {
+                            s_struct_decl.push(format!(
+                                "struct {s_struct_name} {{\n{s_struct_fields_decl}\n}};"
+                            ));
+
+                            union_fields.push((s_struct_name.clone(), s_union_field_name.clone()));
+
+                            arg_len_to_args.insert(
+                                args_name.len(),
+                                (
+                                    args_type_name.iter().skip(1).cloned().collect(),
+                                    args_name.iter().skip(1).cloned().collect(),
+                                    return_type_name.clone(),
+                                ),
+                            );
+                        }
+
+                        let s_method_arguments_decl =
+                            to_argument_list(&args_type_name, &args_name).join(", ");
+                        let s_method_arguments = indent(&args_name.join(",\n"), 5);
+                        class_methods_override.push(format!(
+                            "{return_type_name} {func_name}({s_method_arguments_decl}) override {{ 
+    return m_callback(
+            {s_enum_name}::{func_name},
+            {s_union_name} {{
+                .{s_union_field_name} = {s_struct_name} {{
+{s_method_arguments}
+                }}
+            }},
+            m_callback_params
+    );
+}}"
+                        ));
+                    }
+                }
+                // println!();
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    let class_fields = vec![
+        (s_callback_name.clone(), "m_callback".to_string()),
+        ("void *".to_string(), "m_callback_params".to_string()),
+    ];
+    let s_union_decl = format!(
+        "union {s_union_name} {{\n{}\n}};",
+        union_fields
+            .iter()
+            .map(|(t, n)| format!("{SPACE} {t} {n};"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let s_enum_decl = format!(
+        "enum class {s_enum_name} {{\n{}\n}};",
+        indent(
+            &enum_fields
+                .iter()
+                .map(|e| format!("{e},"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            1
+        )
+    );
+    let s_class_arguments_list = class_fields
+        .iter()
+        .map(|(t, n)| format!("{t} {}", n.strip_prefix("m_").unwrap()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let s_class_arguments_list_init = class_fields
+        .iter()
+        .map(|(t, n)| format!("{}({})", n, n.strip_prefix("m_").unwrap()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let s_class_constructor_sig = format!("{s_class_name}({s_class_arguments_list});");
+    let s_class_destructor_sig = format!("~{s_class_name}();");
+    let s_class_constructor_decl = format!(
+        "{s_class_name}::{s_class_name}({s_class_arguments_list}): {s_class_arguments_list_init} {{}}"
+    );
+    let s_class_destructor_decl = format!("{s_class_name}::~{s_class_name}() {{}}");
+
+    let s_class_decl = format!(
+        "class {s_class_name} : {spi} {{
+public:
+    {s_class_constructor_sig}
+    {s_class_destructor_sig}
+{}
+{}
+}};",
+        indent(
+            &class_fields
+                .iter()
+                .map(|(t, n)| format!("{t} {n};"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            1
+        ),
+        indent(&class_methods_override.join("\n"), 1),
+    );
+
+    output.write_all(
+        vec![
+            s_include,
+            s_struct_decl.join("\n"),
+            s_union_decl,
+            s_enum_decl,
+            s_typedef_decl.join("\n"),
+            s_class_decl,
+            s_class_constructor_decl,
+            s_class_destructor_decl,
+            // "int main() {{}}".to_string(),
+        ]
+        .join("\n\n")
+        .as_bytes(),
+    )?;
+    writeln!(output, "")?;
+
+    Ok(())
+}
+
+fn to_argument_list(tylist: &[String], nmlist: &[String]) -> Vec<String> {
+    tylist
+        .iter()
+        .zip(nmlist.iter())
+        .map(|(t, n)| format!("{t} {n}"))
+        .collect()
 }
 
 fn camel_to_snake(name: &str) -> String {
@@ -84,71 +416,18 @@ fn camel_to_snake(name: &str) -> String {
         static ref PATTERN1: Regex = Regex::new(r"(.)([A-Z][a-z]+)").unwrap();
         static ref PATTERN2: Regex = Regex::new(r"([a-z0-9])([A-Z])").unwrap();
     }
-    PATTERN2.replace_all(PATTERN1.replace_all(name, r"${1}_${2}").as_ref(), r"${1}_${2}").to_lowercase()
+    PATTERN2
+        .replace_all(
+            PATTERN1.replace_all(name, r"${1}_${2}").as_ref(),
+            r"${1}_${2}",
+        )
+        .to_lowercase()
 }
 
-fn replace_trait(fname: &Path, traits: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
-    let mut buf = std::fs::read_to_string(fname)?;
-    for trait_extern in traits {
-        let pattern = Regex::new(
-            &format!(r#"extern \s*"C"\s*\{{\s*pub\s+fn\s+{}_(\w+)\s*\(([^)]*)\)([^;]*);\s*}}\s*"#, trait_extern)).unwrap();
-        let pattern_arg = Regex::new(r"\s*(\w+)\s*:\s*(.*)\s*").unwrap();
-
-        let mut exports = vec![];
-        let mut traitfuns = vec![];
-        assert!(pattern.captures(&buf).is_some(), "`{}` not found in source code", trait_extern);
-        for cap in pattern.captures_iter(&buf) {
-            let fname = cap.get(1).unwrap().as_str().trim();
-            let args: Vec<_> = cap.get(2).unwrap().as_str().split(',').filter(
-                |s| !s.trim().is_empty()
-            ).map(
-                |s| { let c = pattern_arg.captures(s).unwrap(); (c.get(1).unwrap().as_str(), c.get(2).unwrap().as_str()) }
-            ).collect();
-            let rtn = cap.get(3).unwrap().as_str();
-            let fname_camel = camel_to_snake(fname);
-            if fname_camel == "drop" { continue }
-            assert!(args[0].1.trim().ends_with("c_void"));
-
-            let mut tmp = args[1..].iter().map(|s| format!("{}: {}", s.0, s.1)).collect::<Vec<_>>();
-            tmp.insert(0, "trait_obj: *mut ::std::os::raw::c_void".into());
-            let args_repl = tmp.join(", ");
-            let argv_repl = args[1..].iter().map(|s| s.0).collect::<Vec<_>>().join(", ");
-
-            let export = format!(r#"#[no_mangle]
-pub extern "C" fn {trait_extern}_{fname}({args_repl}){rtn} {{
-    let trait_obj = trait_obj as *mut Box<dyn {trait_extern}>;
-    let trait_obj: &mut dyn {trait_extern} = unsafe {{ &mut **trait_obj }};
-    trait_obj.{fname_camel}({argv_repl})
-}}
-"#, trait_extern=trait_extern, fname=fname, args_repl=args_repl, rtn=rtn, fname_camel=fname_camel, argv_repl=argv_repl);
-            exports.push(export);
-
-            let mut tmp = args[1..].iter().map(|s| format!("{}: {}", s.0, s.1)).collect::<Vec<_>>();
-            tmp.insert(0, "&mut self".into());
-            let args_repl = tmp.join(", ");
-            let traitfun = format!(r"    fn {fname_camel}({args_repl}){rtn} {{  }}", fname_camel=fname_camel, args_repl=args_repl, rtn=rtn );
-            traitfuns.push(traitfun);
-        }
-
-        let exports_repl = exports.join("\n");
-        let traitfuns_repl = traitfuns.join("\n");
-
-        buf = format!(r#"{ori}
-#[allow(unused)]
-pub trait {trait_extern} {{
-{traitfuns_repl}
-}}
-
-{exports_repl}
-#[no_mangle]
-pub extern "C" fn {trait_extern}_Drop(trait_obj: *mut ::std::os::raw::c_void) {{
-    let trait_obj = trait_obj as *mut Box<dyn {trait_extern}>;
-    let _r: Box<Box<dyn {trait_extern}>> = unsafe {{ Box::from_raw(trait_obj) }};
-}}
-"#, ori = pattern.replace_all(&buf, ""), exports_repl=exports_repl, trait_extern=trait_extern,
-traitfuns_repl=traitfuns_repl
-            );
-    }
-
-    Ok(buf)
+fn indent(ori: &str, size: usize) -> String {
+    let space = vec!["    "; size].join("");
+    ori.lines()
+        .map(|line| format!("{space}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

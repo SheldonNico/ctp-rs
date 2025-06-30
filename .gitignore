@@ -1,6 +1,7 @@
 /target
 .mypy_cache
 tags*
+shared/sdk
 
 *.con
 *.bak

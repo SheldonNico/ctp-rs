@@ -13,6 +13,7 @@ bindgen = "0.70.1"
 cc = { version = "1.2.0", features = ["parallel"] }
 lazy_static = "1.5.0"
 regex = "1.11.1"
+clang = { version = "2.0.0", features = ["runtime"] }
 
 [dev-dependencies]
 log = "0.4.11"
