@@ -1,10 +1,21 @@
 # ctp-rs
-A simple demo for use bindgen with ctp sdk.
+A simple demo for use bindgen with ctp sdk, use at your own risk. Config `CROSS_CTP_SDK_PATH` to the sdk folder in `.cargo/config.toml` first.
 
-```
-$ # build with CTP
-$ CTP_SDK_PATH=/home/xnie/projects/ctp-rs/shared/sdk/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_api_traderapi_linux64/v6.7.9_P1_20250319_api/v6.7.9_P1_20250319_api_traderapi_se_linux64 cargo b --example tdapi -vvv && LD_LIBRARY_PATH=/home/xnie/projects/ctp-rs/shared/sdk/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_api_traderapi_linux64/v6.7.9_P1_20250319_api/v6.7.9_P1_20250319_api_traderapi_se_linux64 ./target/debug/examples/tdapi
+```bash
+# build for host
+cargo build
 
-$ # build with CTP mini 
-$ CTP_SDK_PATH=/home/xnie/projects/ctp-rs/shared/sdk/CTP_Mini_V1.7.0_20240927/CTP\ Mini_V1.7.0_20240927/CTP\ Mini_V1.7.0_20240927/CTP\ Mini_V1.7.0_linux64_api_20240923/CTP\ Mini_V1.7.0_linux64_api_20240923/ cargo b --example tdapi -vvv
+# build for x86_64-unknown-linux-gnu
+cross build --target=x86_64-unknown-linux-gnu --target-dir ./target/x86_64-unknown-linux-gnu -vvv
+
+# build for x86_64-pc-windows-gnu
+cross build --target=x86_64-pc-windows-gnu --target-dir ./target/build-win-x86_64 -vvv
+
+# build for x86_64-pc-windows-msvc
+# NOTE: need build docker image by yourself
+cross build --target=x86_64-pc-windows-msvc --target-dir ./target/x86_64-pc-windows-msvc -vvv
+
+# build for aarch64-apple-darwin
+# NOTE: need build docker image by yourself
+cross build --target=aarch64-apple-darwin --target-dir ./target/build-apple-aarch64 -vvv
 ```

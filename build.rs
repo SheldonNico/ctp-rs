@@ -5,14 +5,14 @@ use std::env;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-const CTP_SDK_PATH: &'static str = "CTP_SDK_PATH";
-
 // ref: https://www.reddit.com/r/rust/comments/dym88t/rust_and_c_virtual_functions/
 fn main() {
-    println!("cargo:rerun-if-env-changed={}", CTP_SDK_PATH);
-
-    let sdk_path = std::env::var(CTP_SDK_PATH).expect("`CTP_SDK_PATH` not set");
+    let sdk_path = targeted_env_var("CROSS_CTP_SDK_PATH").expect("`CROSS_CTP_SDK_PATH` not set");
     let sdk_path = Path::new(&sdk_path);
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS")
+        .expect("`CARGO_CFG_TARGET_OS` unknown? is cargo corrupt?");
+    println!("CROSS_CTP_SDK_PATH = {}", sdk_path.display());
+    println!("CARGO_CFG_TARGET_OS = {:?}", target_os);
 
     let fpathes = read_for_items(sdk_path).expect("fail to read files");
     let sdk_td_path = search_for_fname(&fpathes, "ThostFtdcTraderApi.h").unwrap();
@@ -47,17 +47,18 @@ fn main() {
     drop(fh);
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    search_and_println_dylib(&fpathes, "thostmduserapi")
+    search_and_println_dylib(&fpathes, "thosttraderapi", &target_os)
         .expect("fail to find lib for thosttraderapi");
-    search_and_println_dylib(&fpathes, "thosttraderapi")
-        .expect("fail to find lib for thosttraderapi");
+    search_and_println_dylib(&fpathes, "thostmduserapi", &target_os)
+        .expect("fail to find lib for thostmduserapi");
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Build
     cc::Build::new()
         .cpp(true)
         .file(&cppfile)
-        .flag_if_supported("-std=c++17")
+        .flag_if_supported("-std=c++17") // for gnu
+        .flag_if_supported("/std:c++20") // for msvc
         .flag_if_supported("-w")
         .compile("bindings");
 
@@ -146,20 +147,20 @@ pub fn search_for_dirname(fpathes: &[PathBuf], target: &str) -> Option<PathBuf> 
     }
 }
 
-// 最好自行修改，SDK 有多个版本，很难通过简单的规则匹配出来
-pub fn search_and_println_dylib(fpathes: &[PathBuf], target: &str) -> Option<()> {
-    let pth = if cfg!(target_os = "macos") {
-        search_for_dirname(fpathes, &format!("{target}.framework"))
-    } else if cfg!(target_os = "windows") {
-        search_for_fname(fpathes, &format!("{target}.lib"))
-            .or(search_for_fname(fpathes, &format!("{target}_se.lib")))
-    } else if cfg!(target_os = "linux") {
-        search_for_fname(fpathes, &format!("lib{target}.so"))
+// NOTE: build.rs runs on host not on target, so cfg!(target_os = ...) not work
+// ref to: https://github.com/cross-rs/cross/issues/1627
+pub fn search_and_println_dylib(fpathes: &[PathBuf], target: &str, target_os: &str) -> Option<()> {
+    let pth = match target_os {
+        "macos" => search_for_dirname(fpathes, &format!("{target}.framework")).or(
+            search_for_dirname(fpathes, &format!("{target}_se.framework")),
+        ),
+        "windows" => search_for_fname(fpathes, &format!("{target}.lib"))
+            .or(search_for_fname(fpathes, &format!("{target}_se.lib"))),
+        "linux" => search_for_fname(fpathes, &format!("lib{target}.so"))
             .or(search_for_fname(fpathes, &format!("lib{target}_se.so")))
             .or(search_for_fname(fpathes, &format!("{target}.so")))
-            .or(search_for_fname(fpathes, &format!("{target}_se.so")))
-    } else {
-        return None;
+            .or(search_for_fname(fpathes, &format!("{target}_se.so"))),
+        _ => None,
     };
     let pth = pth?;
 
@@ -318,7 +319,6 @@ pub fn inherit_spi(
                         ));
                     }
                 }
-                // println!();
             }
         }
     }
@@ -430,4 +430,33 @@ fn indent(ori: &str, size: usize) -> String {
         .map(|line| format!("{space}{line}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// ref to: https://github.com/rust-lang/pkg-config-rs/blob/057321c21329ead3ec7d502a8e730a5fd7a271e9/src/lib.rs#L638
+fn targeted_env_var(var_base: &str) -> Option<std::ffi::OsString> {
+    match (env::var("TARGET"), env::var("HOST")) {
+        (Ok(target), Ok(host)) => {
+            let kind = if host == target { "HOST" } else { "TARGET" };
+            let target_u = target.replace('-', "_");
+
+            env_var_os(&format!("{}_{}", var_base, target))
+                .or_else(|| env_var_os(&format!("{}_{}", var_base, target_u)))
+                .or_else(|| env_var_os(&format!("{}_{}", kind, var_base)))
+                .or_else(|| env_var_os(var_base))
+        }
+        (Err(env::VarError::NotPresent), _) | (_, Err(env::VarError::NotPresent)) => {
+            env_var_os(var_base)
+        }
+        (Err(env::VarError::NotUnicode(s)), _) | (_, Err(env::VarError::NotUnicode(s))) => {
+            panic!(
+                "HOST or TARGET environment variable is not valid unicode: {:?}",
+                s
+            )
+        }
+    }
+}
+
+fn env_var_os(name: &str) -> Option<std::ffi::OsString> {
+    println!("cargo:rerun-if-env-changed={}", name);
+    std::env::var_os(name)
 }

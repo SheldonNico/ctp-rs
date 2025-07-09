@@ -1,0 +1,11 @@
+[env]
+# CROSS_CTP_SDK_PATH = {value="shared/sdk/CTP_Mini_V1.7.0_20240927/CTP Mini_V1.7.0_20240927/CTP Mini_V1.7.0_20240927/CTP Mini_V1.7.0_linux64_api_20240923", relative=true} 
+CROSS_CTP_SDK_PATH_x86_64-unknown-linux-gnu = {value="shared/sdk/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_api_traderapi_linux64", relative=true} 
+CROSS_CTP_SDK_PATH_x86_64-pc-windows-gnu = {value="shared/sdk/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_winApi/traderapi/20250319_traderapi64_se_windows", relative=true} 
+CROSS_CTP_SDK_PATH_x86_64-pc-windows-msvc = {value="shared/sdk/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_traderapi/v6.7.9_P1_20250319_winApi/traderapi/20250319_traderapi64_se_windows", relative=true} 
+CROSS_CTP_SDK_PATH_aarch64-apple-darwin = {value="shared/sdk/TraderapiMduserapi_6.7.7_MacOS/TraderapiMduserapi_6.7.7_MacOS/Traderapi&Mduserapi_6.7.2_MacOS生产版/API", relative=true} 
+
+# proxy: optional
+HTTPS_PROXY = "http://192.168.1.132:2080" 
+HTTP_PROXY = "http://192.168.1.132:2080"
+

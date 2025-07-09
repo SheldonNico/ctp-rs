@@ -19,3 +19,40 @@ clang = { version = "2.0.0", features = ["runtime"] }
 log = "0.4.11"
 dotenv = "0.15.0"
 env_logger = "0.7.1"
+
+# cross compile for windows-msvc and apple-darwin
+[workspace.metadata.cross.target.x86_64-pc-windows-msvc]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-msvc-cross:local"
+
+[workspace.metadata.cross.target.x86_64-pc-windows-msvc.env]
+passthrough = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "OPENSSL_SRC_PERL=/opt/bin/perl.exe", # fix for openssl cross compiling, useless for this crate
+]
+
+[workspace.metadata.cross.target.aarch64-pc-windows-msvc]
+image = "ghcr.io/cross-rs/aarch64-pc-windows-msvc-cross:local"
+
+[workspace.metadata.cross.target.aarch64-pc-windows-msvc.env]
+passthrough = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "OPENSSL_SRC_PERL=/opt/bin/perl.exe", # fix for openssl cross compiling, useless for this crate
+]
+
+[workspace.metadata.cross.target.aarch64-apple-darwin]
+image = "ghcr.io/cross-rs/aarch64-apple-darwin-cross:local"
+
+[workspace.metadata.cross.target.aarch64-apple-darwin.env]
+passthrough = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "RANLIB=aarch64-apple-darwin22.4-ranlib", # fix for openssl cross compiling, useless for this crate
+]
+
+[workspace.metadata.cross.target.x86_64-unknown-linux-gnu.env]
+passthrough = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+]
